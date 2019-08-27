@@ -30,3 +30,7 @@ predict_sentiment(net, vocab, sentence, ctx)
 sentence = '下地狱吧'
 predict_sentiment(net, vocab, sentence, ctx)
 "return negative"
+
+sentence = '你咋不上天呢'
+predict_sentiment(net, vocab, sentence, ctx)
+"return negative"
