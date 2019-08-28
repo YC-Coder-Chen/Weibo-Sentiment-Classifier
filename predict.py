@@ -44,7 +44,7 @@ predict_sentiment(net, vocab, sentence, ctx)
 
 sentence = '今天出太阳啦，我今天特别心情好'
 predict_sentiment(net, vocab, sentence, ctx)
-"return positive"
+"CNN return positive"
 
 sentence = '居然要下雨了，我没有带伞啊，今天真的是操蛋'
 predict_sentiment(net, vocab, sentence, ctx)
