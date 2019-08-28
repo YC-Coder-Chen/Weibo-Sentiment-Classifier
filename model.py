@@ -96,8 +96,51 @@ class Weibo_RNN(nn.Block):
         output = self.decoder(encode_output)
         return output
 
-"Load the model and the pretrained fasttext to prevent overfit"
-def load_net(fasttext, vocab, embed_size, num_hiddens, num_layers, ctx, bidirectional):
+"Define tthe convs of the CNN model"
+def create_con_1d(num_channels, kernel_sizes):
+    """
+    num_channels: a list contains the # of channels for each layer
+    kernel_sizes: a list contains the kernel_sizes for each layer
+    
+    """
+    
+    net = nn.Sequential()
+    for channel, kernel in zip(num_channels, kernel_sizes):
+        net.add(nn.Conv1D(channel, kernel, activation='relu'))
+    return net
+
+"Define th Weibo CNN model"
+class Weibo_TextCNN(nn.Block):
+    def __init__(self, vocab, embed_size, kernel_sizes, num_channels, **kwargs):
+        super(Weibo_TextCNN, self).__init__(**kwargs)
+        self.embedding = nn.Embedding(len(vocab), embed_size) # embed_size defined by fasttext model
+        self.constant_embedding = nn.Embedding(len(vocab), embed_size) # stay constant
+        self.convs = create_con_1d(num_channels, kernel_sizes)
+        self.maxpool = nn.GlobalMaxPool1D() # connect a GloablMax after the convs
+        self.dropout = nn.Dropout(0.5)
+        self.decoder = nn.Dense(2) # we have two output
+
+    def forward(self, inputs):
+        """
+        inputs: (batch_size, max_length)
+        
+        """ 
+        embeddings = nd.concat(self.embedding(inputs), self.constant_embedding(inputs), dim=2) # return (batch_size, max_length, embed_size * 2)
+        embeddings = embeddings.transpose((0, 2, 1)) # Conv1D required
+        """
+        for each convs, the output of conv(embeddings) should be: (batch_size, num_channels of that convs, max_length - kerner_size + 1)
+        for each convs, the output of maxpool(conv(embeddings)) should be: (batch_size, num_channels of that convs, 1)
+        for each convs, the output of nd.flatten(maxpool(conv(embeddings))) should be (batch_size, num_channels of that convs)
+        encoding: concate all the convs and return (batch_size, sum(all kernel_sizes))
+        
+        """  
+        encoding = nd.concat(*[nd.flatten(self.maxpool(conv(embeddings))) for conv in self.convs], dim=1)
+        # use the dropout to prevent overfit
+        outputs = self.decoder(self.dropout(encoding))
+        return outputs
+
+"Load the LSTM model and the pretrained fasttext to prevent overfit"
+def load_LSTM_net(fasttext, vocab, embed_size, num_hiddens, num_layers, ctx, bidirectional):
     if fasttext:
         fasttext_embedding = text.embedding.create('fasttext', pretrained_file_name='wiki.zh.vec', vocabulary=vocab)
     net = Weibo_RNN(vocab, embed_size, num_hiddens, num_layers, bidirectional)
@@ -106,6 +149,19 @@ def load_net(fasttext, vocab, embed_size, num_hiddens, num_layers, ctx, bidirect
     if fasttext:
         net.embedding.weight.set_data(fasttext_embedding.idx_to_vec)
         net.embedding.collect_params().setattr('grad_req', 'null')
+    return net
+
+"Load the CNN model and the pretrained fasttext to prevent overfit"
+def load_CNN_net(fasttext, vocab, embed_size, kernel_sizes, nums_channels, ctx):
+    if fasttext:
+        fasttext_embedding = text.embedding.create('fasttext', pretrained_file_name='wiki.zh.vec', vocabulary=vocab)
+    net = Weibo_TextCNN(vocab, embed_size, kernel_sizes, nums_channels)
+    net.initialize(init.Xavier(), ctx=ctx)
+
+    if fasttext:
+        net.embedding.weight.set_data(fasttext_embedding.idx_to_vec) # do not freeze the non-constant layer
+        net.constant_embedding.weight.set_data(fasttext_embedding.idx_to_vec)
+        net.constant_embedding.collect_params().setattr('grad_req', 'null') # freeze the constant layer
     return net
 
 "Create k-fold"    
@@ -199,7 +255,7 @@ def evaluate_accuracy(data_iter, net, ctx):
     return acc_sum.asscalar() / n
 
 "Train the model on all the train sample"
-def train_on_all_data(net, train_features, train_labels, test_features, test_labels, num_epochs, learning_rate, batch_size, trainer, loss, ctx):
+def train_on_all_data(net, train_features, train_labels, test_features, test_labels, num_epochs, learning_rate, batch_size, trainer, loss, ctx, model_label='LSTM'):
     train_set = gdata.ArrayDataset(train_features, train_labels)
     test_set = gdata.ArrayDataset(test_features, test_labels)
     train_iter = gdata.DataLoader(train_set, batch_size, shuffle=True)
@@ -220,7 +276,7 @@ def train_on_all_data(net, train_features, train_labels, test_features, test_lab
             n += y.size
     test_acc = evaluate_accuracy(test_iter, net, ctx)
     print(f'loss {train_l_sum / n}, train acc {train_acc_sum / n}, test acc {test_acc}, time {time.time() - start}')
-    net.save_parameters(f'./data/params_best')
+    net.save_parameters(f'./data/params_best_{model_label}')
 
 "Predict final sentiment"
 def predict_sentiment(net, vocab, sentence, ctx):
